@@ -8,16 +8,14 @@
 CXXFLAGS= -O3 -g -D_FILE_OFFSET_BITS=64 -std=c++0x -DMACOSX
 
 ## Source code files, add new files to this list
-SRC_COMMON  = error.cpp io.cpp base_caller.cpp
+SRC_COMMON  = error.cpp confusion_matrix.cpp io.cpp seqio.cpp base_caller.cpp
 
 # For each CPP file, generate an object file
 OBJ_COMMON  := $(SRC_COMMON:.cpp=.o)
 
-
-
 BAMTOOLS_ROOT=bamtools
 
-LIBS = -L$(BAMTOOLS_ROOT)/lib
+LIBS = -L./ -lz -L$(BAMTOOLS_ROOT)/lib
 INCLUDE = -I$(BAMTOOLS_ROOT)/src 
 BAMTOOLS_LIB = $(BAMTOOLS_ROOT)/lib/libbamtools.a
 
@@ -39,7 +37,7 @@ clean-all: clean
 # If this causes problems with non-gnu make (e.g. on MacOS/FreeBSD), remove it.
 include $(subst .cpp,.d,$(SRC))
 
-BaseCaller: $(OBJ_COMMON)
+BaseCaller: $(OBJ_COMMON) $(BAMTOOLS_LIB)
 	$(CXX) $(CXXFLAGS) $(INCLUDE) -o $@ $^ $(LIBS)
 
 # Build each object file independently
