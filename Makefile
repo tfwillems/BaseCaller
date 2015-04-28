@@ -13,6 +13,15 @@ SRC_COMMON  = error.cpp io.cpp base_caller.cpp
 # For each CPP file, generate an object file
 OBJ_COMMON  := $(SRC_COMMON:.cpp=.o)
 
+
+
+BAMTOOLS_ROOT=bamtools
+
+LIBS = -L$(BAMTOOLS_ROOT)/lib
+INCLUDE = -I$(BAMTOOLS_ROOT)/src 
+BAMTOOLS_LIB = $(BAMTOOLS_ROOT)/lib/libbamtools.a
+
+
 .PHONY: all
 all: BaseCaller
 
@@ -41,3 +50,8 @@ BaseCaller: $(OBJ_COMMON)
 %.d: %.cpp $(BAMTOOLS_LIB)
 	$(CXX) -c -MP -MD $(CXXFLAGS) $(INCLUDE) $< > $@
 
+# Rebuild BAMTools if needed
+$(BAMTOOLS_LIB):
+	git submodule update --init --recursive bamtools
+	git submodule update --recursive bamtools
+	( cd bamtools && mkdir build && cd build && cmake .. && $(MAKE) )
