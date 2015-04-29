@@ -5,6 +5,7 @@
 #include "bamtools/include/api/BamAlignment.h"
 
 #include "error.h"
+#include "seqio.h"
 
 inline char get_base(int base_index){
   switch(base_index){
@@ -24,7 +25,8 @@ inline char get_base(int base_index){
   return '0';
 }
 
-inline int get_base_index(char base, std::string& seq, std::string msg){
+inline int get_base_index(char base){
+  base =  (char)toupper(base);
   switch (base){
   case 'A':
     return 0;
@@ -37,7 +39,7 @@ inline int get_base_index(char base, std::string& seq, std::string msg){
   case 'N':
     return 4;
   default:
-    printErrorAndDie("Invalid base " + std::to_string(base) + " in " + seq + "\n" + msg);
+    printErrorAndDie("Invalid base " + std::to_string(base));
   }
   return -1;
 } 
@@ -63,8 +65,7 @@ int32_t start_with_soft_clips(BamTools::BamAlignment& aln){
   if (cigar.Type != 'S')
     return aln.Position;
   else
-    return aln.Position-cigar.Length;
-  
+    return aln.Position-cigar.Length;  
 }
 
 int32_t end_with_soft_clips(BamTools::BamAlignment& aln){
@@ -91,6 +92,14 @@ void walk_alignment_forward(BamTools::BamAlignment& aln, int32_t max_read_length
   auto aln_seq_iter = aln.QueryBases.begin();
   auto ref_seq_iter = ref_seq.begin() + start_with_soft_clips(aln);
   int32_t read_pos  = 0;
+
+  /*
+  std::cerr << get_cigar_string(aln) << std::endl
+	    << aln.QueryBases << std::endl
+	    << ref_seq.substr(start_with_soft_clips(aln), 100) << std::endl << std::endl;
+  printErrorAndDie("boo");
+  */
+
   for (auto iter = aln.CigarData.begin(); iter != aln.CigarData.end(); iter++){
     switch(iter->Type){
     case 'M': case 'S':
@@ -98,8 +107,8 @@ void walk_alignment_forward(BamTools::BamAlignment& aln, int32_t max_read_length
 	if (read_pos >= max_read_length)
 	  return;
 
-	int ref_base_index  = get_base_index(*ref_seq_iter, ref_seq, "Ref forward");
-	int emit_base_index = get_base_index(*aln_seq_iter, aln.QueryBases, "Read forward");
+	int ref_base_index  = get_base_index(*ref_seq_iter);
+	int emit_base_index = get_base_index(*aln_seq_iter);
 	total_counts[ref_base_index]++;
 	matrix_counts[5*ref_base_index + emit_base_index]++;
 	aln_seq_iter++;
@@ -136,12 +145,8 @@ void walk_alignment_reverse(BamTools::BamAlignment& aln, int32_t max_read_length
 	if (read_pos >= max_read_length)
 	  return;
 	
-	if (*aln_seq_iter == '0'){
-	  std::cerr << "Bad alignment read: " << aln.QueryBases << std::endl;
-	}
-
-	int ref_base_index  = get_base_index(*ref_seq_iter, ref_seq, "Ref backward " + std::to_string(read_pos) + " " + std::to_string(aln.GetEndPosition()) + " " + std::to_string(aln.Position));
-	int emit_base_index = get_base_index(*aln_seq_iter, aln.QueryBases, "Read backward");
+	int ref_base_index  = get_base_index(*ref_seq_iter);
+	int emit_base_index = get_base_index(*aln_seq_iter);
 	total_counts[ref_base_index]++;
 	matrix_counts[5*ref_base_index + emit_base_index]++;
 	aln_seq_iter--;
@@ -167,17 +172,23 @@ void walk_alignment_reverse(BamTools::BamAlignment& aln, int32_t max_read_length
   }
 }
 
-void process_reads(BamTools::BamReader& bam_reader, int32_t max_read_length, std::string& ref_seq,
-		   int32_t* matrix_counts, int32_t* total_counts, bool skip_soft_clipped){
+void process_reads(BamTools::BamReader& bam_reader, int32_t max_read_length, int32_t ref_id, std::string& ref_seq, std::string& fasta_dir, bool skip_soft_clipped, 
+		   int32_t* matrix_counts, int32_t* total_counts, int32_t& forward, int32_t& reverse){
   BamTools::BamAlignment aln;
-  int32_t hard_clip_count      = 0;
-  int32_t too_close_to_start   = 0;
-  int32_t too_close_to_end     = 0;
-  int32_t read_count           = 0;
-  int32_t forward = 0, reverse = 0;
+  int32_t hard_clip_count        = 0;
+  int32_t soft_clip_count        = 0;
+  int32_t too_close_to_start     = 0;
+  int32_t too_close_to_end       = 0;
+  int32_t read_count             = 0;
+  BamTools::RefVector ref_vector = bam_reader.GetReferenceData();
   while (bam_reader.GetNextAlignment(aln)){
+    if (aln.RefID == -1){
+      ++read_count;
+      continue;
+    }
+
     if (++read_count % 100000 == 0)
-      std::cerr << "Processing read # " << read_count << ", position=" << aln.Position << ", # forward=" << forward << ", # reverse=" << reverse << std::endl;
+      std::cerr << "Processing read # " << read_count << ", chrom=" << ref_vector[aln.RefID].RefName <<  ", position=" << aln.Position << ", # forward=" << forward << ", # reverse=" << reverse << ", # hard clip skip=" << hard_clip_count << ", # soft clip skip=" << soft_clip_count << std::endl;
     if (read_count % 1000000 == 0){
       std::cerr << aln.Position << std::endl;
       print_confusion_matrix(matrix_counts, total_counts, max_read_length, std::cout);
@@ -188,8 +199,10 @@ void process_reads(BamTools::BamReader& bam_reader, int32_t max_read_length, std
       continue;
     }
 
-    if (skip_soft_clipped && is_soft_clipped(aln))
+    if (skip_soft_clipped && is_soft_clipped(aln)){
+      soft_clip_count++;
       continue;
+    }
 
     if (start_with_soft_clips(aln) < 50) {
       too_close_to_start++;
@@ -199,7 +212,18 @@ void process_reads(BamTools::BamReader& bam_reader, int32_t max_read_length, std
       too_close_to_end++;
       continue;
     }
-  
+
+    // Update reference sequence if necessary
+    if (aln.RefID != ref_id){
+      std::string chrom = ref_vector[aln.RefID].RefName;
+      if (chrom.find('_') == std::string::npos){
+	ref_id = aln.RefID;
+	readFasta(chrom+".fa", fasta_dir, ref_seq);
+      }
+      else
+	continue;
+    }
+    
     if (aln.IsReverseStrand()){
       reverse++;
       walk_alignment_reverse(aln, max_read_length, ref_seq, matrix_counts, total_counts);
